@@ -71,6 +71,38 @@ engine.start();
 | `volume` | `1.0` | Master audio volume (0–1). |
 | `gamepads` | `true` | Poll connected gamepads (standard mapping) each frame. |
 | `logLevel` | `error` | Core messages printed to the console (`off`, `error`, `debug`). |
+| `escMenu` | `true` | Show the built-in in-game settings menu when the player presses Escape. |
+
+## In-game settings menu
+
+Snes9x keeps its configuration in the core's global `Settings` struct, which
+the emulation re-reads as it runs — the DSP consults the interpolation mode per
+sample, the PPU the sprite limit per scanline — so almost every option above
+can be changed without restarting the game. `load()` mounts a settings overlay
+over the viewport that does exactly that — **press Escape** to open it.
+
+- ↑ ↓ select · ← → change · Enter apply · Esc close (mouse works too)
+- Changes persist per `storageNamespace` in `localStorage` and are re-applied
+  on the next `load()`. Explicit `options` passed by the host still win.
+- `region` is tagged **needs reset**: the core reads the forced video standard
+  while it maps the cartridge and clears it there, so the menu's *Reset game*
+  re-maps the ROM to apply it (battery RAM is carried across).
+- Settings the loaded `snes9x.wasm` cannot apply — a build predating one of the
+  shim's setters — are omitted rather than erroring, so the menu degrades
+  cleanly against an older artifact.
+
+Pass `options: { escMenu: false }` to suppress it and drive the settings
+yourself:
+
+```js
+engine.config.write('maxSpriteTilesPerLine', 128); // no sprite dropout
+engine.config.read('interpolation');               // 'gaussian'
+engine.menu?.toggle();
+```
+
+Every knob is declared once in [src/snes9x.options.ts](src/snes9x.options.ts);
+the manifest's options schema, the defaults and the menu are all derived from
+that catalog, so a new row there is enough to expose a new setting.
 
 ### Capabilities
 
@@ -78,7 +110,8 @@ engine.start();
   snapshot API (`S9xFreezeGameMem`), ~800 KB for a typical cart.
 - **SRAM persistence**: battery-backed cartridge SRAM is persisted to OPFS
   (`snes9x/<storageNamespace>/sram.bin`) on pause/destroy and every 15 s;
-  `purgeStorage()` removes the active namespace.
+  `purgeStorage()` removes the active namespace, along with the menu settings
+  saved for it.
 - **Screenshots**: `screenshot()` returns a PNG blob.
 
 ### Default controls

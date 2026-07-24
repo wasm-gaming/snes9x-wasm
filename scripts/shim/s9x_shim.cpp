@@ -208,6 +208,48 @@ std::string S9xGetFilenameInc(std::string ext, enum s9x_getdirtype) { return "ro
 /** 0 silent, 1 errors/warnings (default), 2 everything. */
 WASM_EXPORT void s9xwasm_set_loglevel(int level) { g_log_level = level; }
 
+// ------------------------------------------------------- live settings
+//
+// The core reads Settings as it runs — the DSP consults the interpolation
+// mode per sample, the PPU the sprite limit per scanline, the GSU its clock
+// multiplier per line — so these take effect on the running game. The one
+// exception is the region, which InitROM consumes (and then clears) while
+// mapping the cartridge: the SDK re-loads the ROM to apply it.
+
+/** DSP sample interpolation: DSP_INTERPOLATION_* (0 none .. 4 sinc). */
+WASM_EXPORT void s9xwasm_set_interpolation(int method)
+{
+    if (method >= DSP_INTERPOLATION_NONE && method <= DSP_INTERPOLATION_SINC)
+        Settings.InterpolationMethod = method;
+}
+
+/** Sprite tiles per scanline: 34 is hardware (flicker included), 128 lifts it. */
+WASM_EXPORT void s9xwasm_set_sprite_tiles_per_line(int tiles)
+{
+    if (tiles > 0)
+        Settings.MaxSpriteTilesPerLine = tiles;
+}
+
+/** Super FX clock as a percentage of stock, clamped to the range the GTK port uses. */
+WASM_EXPORT void s9xwasm_set_superfx_multiplier(int percent)
+{
+    if (percent < 50)
+        percent = 50;
+    else if (percent > 400)
+        percent = 400;
+    Settings.SuperFXClockMultiplier = static_cast<uint32>(percent);
+}
+
+/**
+ * Video standard for the *next* cartridge mapping: 0 auto (from the header),
+ * 1 force NTSC, 2 force PAL.
+ */
+WASM_EXPORT void s9xwasm_set_region(int region)
+{
+    Settings.ForceNTSC = (region == 1);
+    Settings.ForcePAL = (region == 2);
+}
+
 /**
  * Initialize the core. `region`: 0 auto, 1 force NTSC, 2 force PAL.
  * `samplerate` should be the host AudioContext rate — the APU resamples to
@@ -232,7 +274,7 @@ WASM_EXPORT int s9xwasm_setup(int samplerate, int region, int interpolation)
     Settings.SoundPlaybackRate = samplerate;
     Settings.SoundInputRate = 31950; // upstream default; tuned by dynamic rate
     Settings.SoundSync = FALSE;
-    Settings.InterpolationMethod = interpolation;
+    s9xwasm_set_interpolation(interpolation);
 
     Settings.Transparency = TRUE;
     Settings.AutoDisplayMessages = FALSE; // no OSD over the emulated picture
@@ -243,14 +285,13 @@ WASM_EXPORT int s9xwasm_setup(int samplerate, int region, int interpolation)
     Settings.DontSaveOopsSnapshot = TRUE;
     Settings.AutoSaveDelay = 0;
 
-    Settings.ForceNTSC = (region == 1);
-    Settings.ForcePAL = (region == 2);
+    s9xwasm_set_region(region);
 
     Settings.OneClockCycle = 6;
     Settings.OneSlowClockCycle = 8;
     Settings.TwoClockCycles = 12;
-    Settings.MaxSpriteTilesPerLine = 34;
-    Settings.SuperFXClockMultiplier = 100;
+    s9xwasm_set_sprite_tiles_per_line(34);
+    s9xwasm_set_superfx_multiplier(100);
 
     Settings.CartAName[0] = 0;
     Settings.CartBName[0] = 0;

@@ -8,11 +8,24 @@ import type {
 } from '@wasm-gaming/engine-specs';
 import { manifest } from './snes9x.manifest.js';
 import {
+  bindConfig,
+  createSettingsStore,
+  type Snes9xAppliers,
+  type Snes9xConfig,
+} from './snes9x.config.js';
+import { createMenu, type Snes9xMenu } from './snes9x.menu.js';
+import {
+  coerceOptionValue,
   DEFAULT_SNES9X_OPTIONS,
+  SNES9X_ENGINE_OPTIONS,
   SNES9X_INTERPOLATION_IDS,
   SNES9X_LOG_LEVEL_IDS,
   SNES9X_REGION_IDS,
+  type Snes9xInterpolation,
+  type Snes9xLogLevel,
   type Snes9xOptions,
+  type Snes9xOptionValue,
+  type Snes9xRegion,
 } from './snes9x.options.js';
 
 export { manifest };
@@ -54,6 +67,13 @@ type Snes9xModule = {
   _s9xwasm_sram_size(): number;
   _s9xwasm_rom_name(): number;
   _s9xwasm_rom_size(): number;
+  // Live `Settings` writes, added to the shim after the first release. They
+  // are optional so an older snes9x.wasm still loads — the settings they back
+  // are then reported as unsupported and drop out of the menu.
+  _s9xwasm_set_interpolation?(method: number): void;
+  _s9xwasm_set_sprite_tiles_per_line?(tiles: number): void;
+  _s9xwasm_set_superfx_multiplier?(percent: number): void;
+  _s9xwasm_set_region?(region: number): void;
 };
 
 type Snes9xModuleFactory = (
@@ -220,7 +240,14 @@ function heapAlloc(mod: Snes9xModule, bytes: Uint8Array): number {
   return ptr;
 }
 
-export async function load(config: EngineConfig): Promise<EngineInstance> {
+export type Snes9xInstance = EngineInstance & {
+  /** Live handle on the emulator settings; writes apply to the running game. */
+  config: Snes9xConfig;
+  /** The in-game settings overlay, or `null` when `options.escMenu` is false. */
+  menu: Snes9xMenu | null;
+};
+
+export async function load(config: EngineConfig): Promise<Snes9xInstance> {
   const { assets, onEvent } = config;
 
   const emit = (e: EngineEvent): void => {
@@ -236,10 +263,30 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
     throw new Error('snes9x: no ROM provided — pass assets.rom (a .sfc/.smc cartridge image)');
   }
 
-  const opts: Required<Snes9xOptions> = {
-    ...DEFAULT_SNES9X_OPTIONS,
-    ...(config.options as Snes9xOptions | undefined),
-  };
+  const namespace = config.storageNamespace ?? 'default';
+  const settingsStore = createSettingsStore(namespace);
+  const requested = (config.options ?? {}) as Record<string, unknown>;
+
+  // This package's defaults, then the player's persisted menu tweaks, then
+  // whatever the host asked for explicitly — a caller-supplied option is a
+  // deliberate choice and outranks the last session.
+  const opts: Required<Snes9xOptions> = { ...DEFAULT_SNES9X_OPTIONS };
+  // The same object seen by key, which is what the live config writes through:
+  // the loop reads `opts` every frame, so a menu change is picked up with no
+  // further plumbing.
+  const state = opts as unknown as Record<string, Snes9xOptionValue>;
+
+  const persisted = settingsStore.load();
+  for (const option of SNES9X_ENGINE_OPTIONS) {
+    const stored = persisted[option.key];
+    if (stored !== undefined) state[option.key] = stored;
+
+    const asked = requested[option.key];
+    if (asked === undefined) continue;
+    const value = coerceOptionValue(option, asked);
+    if (value !== undefined) state[option.key] = value;
+  }
+  if (typeof requested.escMenu === 'boolean') opts.escMenu = requested.escMenu;
 
   const canvas = resolveCanvas(config);
   canvas.style.imageRendering = opts.renderFilter === 'pixelated' ? 'pixelated' : 'auto';
@@ -303,6 +350,10 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
     throw new Error('snes9x: core initialization failed');
   }
   mod._s9xwasm_set_multitap(opts.multitap ? 1 : 0);
+  // s9xwasm_setup() installs the stock values for these two, so they are only
+  // hacks once the SDK writes them.
+  mod._s9xwasm_set_sprite_tiles_per_line?.(opts.maxSpriteTilesPerLine);
+  mod._s9xwasm_set_superfx_multiplier?.(opts.superFXClockMultiplier);
 
   const romPtr = heapAlloc(mod, romBytes);
   const romOk = mod._s9xwasm_load_rom(romPtr, romBytes.length);
@@ -312,13 +363,12 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
   }
 
   // Region comes from the cartridge header, so the framerate is only known
-  // once the ROM is mapped.
-  const framerate = mod._s9xwasm_framerate_micro() / 1e6;
-  const framesPerExec = sampleRate / framerate;
+  // once the ROM is mapped — and changes if the region is later forced.
+  let framerate = mod._s9xwasm_framerate_micro() / 1e6;
+  let framesPerExec = sampleRate / framerate;
 
   // ---------------------------------------------------------- persistence
   const persistEnabled = config.persist !== null && typeof navigator !== 'undefined';
-  const namespace = config.storageNamespace ?? 'default';
   const sramSize = mod._s9xwasm_sram_size();
 
   const restoreSram = async (): Promise<void> => {
@@ -457,6 +507,14 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
   let lastW = 0;
   let lastH = 0;
 
+  // Square-pixel mode still needs the 8:7 correction the SNES applies; 4:3 is
+  // what the same picture looked like on a CRT. Kept apart from the resize
+  // below so the menu can restyle the canvas without a new frame.
+  const applyAspect = (): void => {
+    if (!lastW) return;
+    canvas.style.aspectRatio = opts.aspect === '4:3' ? '4 / 3' : `${lastW} / ${lastH}`;
+  };
+
   const renderFrame = (): void => {
     const w = mod._s9xwasm_frame_width();
     const h = mod._s9xwasm_frame_height();
@@ -478,12 +536,10 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
     if (w !== lastW || outH !== lastH || !imageData) {
       canvas.width = w;
       canvas.height = outH;
-      // Square-pixel mode still needs the 8:7 correction the SNES applies;
-      // 4:3 is what the same picture looked like on a CRT.
-      canvas.style.aspectRatio = opts.aspect === '4:3' ? '4 / 3' : `${w} / ${outH}`;
       imageData = ctx2d.createImageData(w, outH);
       lastW = w;
       lastH = outH;
+      applyAspect();
     }
 
     const ptr = mod._s9xwasm_frame_rgba() + srcY * w * 4;
@@ -597,7 +653,99 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
     }
   };
 
-  const instance: EngineInstance = {
+  // -------------------------------------------------------- live settings
+  // The region the cartridge was mapped with. The core reads the forced
+  // standard in InitROM and clears it there, so a change only lands by
+  // re-mapping the cartridge — which is why the option is tagged "needs
+  // reset" and applied from reset() below.
+  let mappedRegion: Snes9xRegion = opts.region;
+
+  const remapCartridge = (): void => {
+    // Battery RAM survives both a power cycle on hardware and S9xReset here,
+    // so it is carried across the re-map rather than lost to it.
+    const sramPtr = mod._s9xwasm_sram_ptr();
+    const sram = sramSize ? mod.HEAPU8.slice(sramPtr, sramPtr + sramSize) : null;
+
+    mod._s9xwasm_set_region?.(SNES9X_REGION_IDS[opts.region]);
+    const ptr = heapAlloc(mod, romBytes);
+    const ok = mod._s9xwasm_load_rom(ptr, romBytes.length);
+    mod._free(ptr);
+    if (!ok) throw new Error('snes9x: ROM re-load failed while changing region');
+    mappedRegion = opts.region;
+
+    framerate = mod._s9xwasm_framerate_micro() / 1e6;
+    framesPerExec = sampleRate / framerate;
+
+    mod._s9xwasm_reset();
+    if (sram) mod.HEAPU8.set(sram, mod._s9xwasm_sram_ptr());
+  };
+
+  /**
+   * How each setting reaches the running emulator. A key left out here — or
+   * dropped because the loaded wasm predates its shim setter — is reported as
+   * unsupported and does not appear in the menu.
+   */
+  const appliers: Snes9xAppliers = {
+    renderFilter: (value) => {
+      canvas.style.imageRendering = value === 'pixelated' ? 'pixelated' : 'auto';
+    },
+    aspect: () => applyAspect(),
+    cropOverscan: () => {
+      // Forces the resize path, which re-crops and re-sizes the backing store.
+      lastH = 0;
+      renderFrame();
+    },
+    volume: (value) => {
+      gain.gain.value = Math.max(0, Math.min(1, Number(value)));
+    },
+    gamepads: (value) => {
+      // Whatever a pad was holding when polling stopped would otherwise stay
+      // pressed forever.
+      if (!value) {
+        padMasks.fill(0);
+        pushInputs();
+      }
+    },
+    multitap: (value) => mod._s9xwasm_set_multitap(value ? 1 : 0),
+    logLevel: (value) => mod._s9xwasm_set_loglevel(SNES9X_LOG_LEVEL_IDS[value as Snes9xLogLevel]),
+  };
+
+  const setInterpolation = mod._s9xwasm_set_interpolation;
+  if (setInterpolation) {
+    appliers.interpolation = (value) =>
+      setInterpolation.call(mod, SNES9X_INTERPOLATION_IDS[value as Snes9xInterpolation]);
+  }
+  const setSpriteTiles = mod._s9xwasm_set_sprite_tiles_per_line;
+  if (setSpriteTiles) {
+    appliers.maxSpriteTilesPerLine = (value) => setSpriteTiles.call(mod, Number(value));
+  }
+  const setSuperFX = mod._s9xwasm_set_superfx_multiplier;
+  if (setSuperFX) {
+    appliers.superFXClockMultiplier = (value) => setSuperFX.call(mod, Number(value));
+  }
+  if (mod._s9xwasm_set_region) {
+    // Recorded now, applied by reset().
+    appliers.region = () => {};
+  }
+
+  const engineConfig = bindConfig(state, appliers);
+
+  const menu = opts.escMenu
+    ? createMenu({
+        mount:
+          (config as { attachTo?: HTMLElement }).attachTo ??
+          canvas.parentElement ??
+          document.body,
+        config: engineConfig,
+        onReset: () => instance.reset(),
+        onChange: (values) => settingsStore.save(values),
+        onRestoreDefaults: () => settingsStore.clear(),
+      })
+    : null;
+
+  const instance: Snes9xInstance = {
+    config: engineConfig,
+    menu,
     start() {
       if (running) return;
       running = true;
@@ -624,7 +772,8 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
       startLoop();
     },
     reset() {
-      mod._s9xwasm_reset();
+      if (opts.region !== mappedRegion) remapCartridge();
+      else mod._s9xwasm_reset();
     },
     setInput,
     async saveState(): Promise<Uint8Array> {
@@ -658,7 +807,8 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
       } catch {
         // nothing persisted for this namespace
       }
-      return { data, settings: false };
+      settingsStore.clear();
+      return { data, settings: true };
     },
     destroy() {
       running = false;
@@ -672,6 +822,7 @@ export async function load(config: EngineConfig): Promise<EngineInstance> {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('pointerdown', resumeAudio);
       window.removeEventListener('keydown', resumeAudio);
+      menu?.destroy();
       sink.disconnect();
       gain.disconnect();
       void audioCtx.close();

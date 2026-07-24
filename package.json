@@ -27,7 +27,9 @@
   "files": [
     "dist/snes9x/",
     "dist/manifest.json",
+    "src/snes9x.config.ts",
     "src/snes9x.manifest.ts",
+    "src/snes9x.menu.ts",
     "src/snes9x.options.ts",
     "src/snes9x.sdk.ts",
     "README.md"

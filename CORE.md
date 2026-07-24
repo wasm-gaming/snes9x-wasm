@@ -26,6 +26,7 @@ Snes9x is a core plus a choice of frontend ports (`unix/`, `gtk/`, `qt/`,
 | 5-player Multitap (`CTL_MP5`) | ✅ `options.multitap` (pads 2-5) |
 | Enhancement chips: Super FX/FX2, SA-1, DSP-1/2/3/4, S-DD1, SPC7110, C4, OBC1, S-RTC, SETA ST-010/011/018 | ✅ compiled in, no extra assets needed |
 | Sprite-per-line limit, Super FX overclock | ✅ `options.maxSpriteTilesPerLine`, `options.superFXClockMultiplier` |
+| Settings changed while a game runs (the core re-reads `Settings` as it emulates) | ✅ `s9xwasm_set_interpolation` / `_sprite_tiles_per_line` / `_superfx_multiplier` / `_region`, driven by the ESC menu and `engine.config` |
 | MSU-1 (streamed audio/data) | ⚠️ compiled in, but the side files it reads (`<rom>.msu`, `<rom>-N.pcm`) are never mounted, so it is effectively off |
 | BS-X, Sufami Turbo, multi-cart | ❌ needs `LoadMultiCartMem` plus BIOS assets; not wired |
 | Mouse, Super Scope, Justifier, Macs Rifle | ❌ masters disabled in `s9xwasm_setup`; only joypads are wired |
@@ -59,6 +60,11 @@ Snes9x is a core plus a choice of frontend ports (`unix/`, `gtk/`, `qt/`,
   files that do not exist — MSU-1 in particular latches on.
 - `-sSTACK_SIZE=5242880`: the default 64 KB is not enough for `snapshot.cpp`,
   which walks large descriptor tables while freezing.
+- `Settings.ForceNTSC` / `ForcePAL` are consumed by `InitROM()` and cleared
+  there, so forcing a region after boot means re-mapping the cartridge
+  (`s9xwasm_set_region()` + `s9xwasm_load_rom()`), which is what the SDK's
+  `reset()` does when `options.region` has changed. `S9xReset()` alone leaves
+  `Settings.PAL` where it was — and, like real hardware, leaves SRAM intact.
 - `memmap.cpp` prints its memory-map choice (`Map_LoROMMap`) with a bare
   `printf`, so that one line reaches the console regardless of
   `options.logLevel`, which only gates `S9xMessage`.

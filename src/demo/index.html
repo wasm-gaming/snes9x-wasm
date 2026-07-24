@@ -25,7 +25,7 @@
       // as page query params: ?region=pal, ?aspect=1:1, ?cropOverscan=false,
       // ?multitap=true, ?interpolation=none, ...
       const params = new URLSearchParams(location.search);
-      const BOOLEAN_KEYS = ["cropOverscan", "multitap", "gamepads"];
+      const BOOLEAN_KEYS = ["cropOverscan", "multitap", "gamepads", "escMenu"];
       const NUMBER_KEYS = ["maxSpriteTilesPerLine", "superFXClockMultiplier", "volume"];
       const overrides = {};
       for (const key of [
