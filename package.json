@@ -1,0 +1,51 @@
+{
+  "name": "@wasm-gaming/snes9x-wasm",
+  "version": "0.1.0",
+  "description": "Snes9x (Super Nintendo / Super Famicom emulator) compiled to WebAssembly via Emscripten, with a JS SDK conforming to the wasm-gaming engine contract.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wasm-gaming/snes9x-wasm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wasm-gaming/snes9x-wasm/issues"
+  },
+  "homepage": "https://github.com/wasm-gaming/snes9x-wasm#readme",
+  "type": "module",
+  "main": "./dist/snes9x/snes9x.sdk.js",
+  "types": "./dist/snes9x/snes9x.sdk.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/snes9x/snes9x.sdk.d.ts",
+      "import": "./dist/snes9x/snes9x.sdk.js"
+    },
+    "./options": {
+      "types": "./dist/snes9x/snes9x.options.d.ts",
+      "import": "./dist/snes9x/snes9x.options.js"
+    },
+    "./manifest": "./dist/manifest.json"
+  },
+  "files": [
+    "dist/snes9x/",
+    "dist/manifest.json",
+    "src/snes9x.manifest.ts",
+    "src/snes9x.options.ts",
+    "src/snes9x.sdk.ts",
+    "README.md"
+  ],
+  "comment:scripts": "Build logic lives in the Makefile, not here (make build / build-sdk / build-wasm / preview).",
+  "scripts": {},
+  "peerDependencies": {
+    "@wasm-gaming/engine-specs": ">=0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@wasm-gaming/engine-specs": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@wasm-gaming/engine-specs": "^0.2.4",
+    "typescript": "^5.5.0"
+  },
+  "engineContract": "https://github.com/wasm-gaming/engine-specs",
+  "license": "MIT"
+}

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Snes9x WASM — Super Nintendo Demo</title>
+    <link rel="icon" href="data:," />
+
+    <!-- Base theme from the engine-specs demo template, then our SNES skin.
+         snes9x.css is loaded last so its :root token overrides win. -->
+    <link rel="stylesheet" href="./demo.css" />
+    <link rel="stylesheet" href="./snes9x.css" />
+  </head>
+  <body>
+    <main></main>
+
+    <!-- Hand the Snes9x SDK to the template shell (sdk.js picks up window.SDK),
+         then boot the shared demo.js. Order matters: SDK must exist before
+         demo.js runs its top-level getSdk(). -->
+    <script type="module">
+      import sdk from "./snes9x/snes9x.sdk.js";
+
+      // The template shell only passes fileName/byteLength, so engine options
+      // keep their defaults. Expose the ones worth trying without editing code
+      // as page query params: ?region=pal, ?aspect=1:1, ?cropOverscan=false,
+      // ?multitap=true, ?interpolation=none, ...
+      const params = new URLSearchParams(location.search);
+      const BOOLEAN_KEYS = ["cropOverscan", "multitap", "gamepads"];
+      const NUMBER_KEYS = ["maxSpriteTilesPerLine", "superFXClockMultiplier", "volume"];
+      const overrides = {};
+      for (const key of [
+        "region",
+        "interpolation",
+        "renderFilter",
+        "aspect",
+        "logLevel",
+        ...BOOLEAN_KEYS,
+        ...NUMBER_KEYS,
+      ]) {
+        const value = params.get(key);
+        if (value === null) continue;
+        if (BOOLEAN_KEYS.includes(key)) overrides[key] = value !== "false";
+        else if (NUMBER_KEYS.includes(key)) overrides[key] = Number(value);
+        else overrides[key] = value;
+      }
+
+      window.SDK = {
+        ...sdk,
+        load: (config) =>
+          sdk.load({ ...config, options: { ...config.options, ...overrides } }),
+      };
+
+      await import("./demo.js");
+    </script>
+  </body>
+</html>
