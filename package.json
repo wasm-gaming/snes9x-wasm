@@ -1,6 +1,6 @@
 {
   "name": "@wasm-gaming/snes9x-wasm",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Snes9x (Super Nintendo / Super Famicom emulator) compiled to WebAssembly via Emscripten, with a JS SDK conforming to the wasm-gaming engine contract.",
   "repository": {
     "type": "git",
