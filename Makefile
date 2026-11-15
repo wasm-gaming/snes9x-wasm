@@ -2,8 +2,10 @@ BIN := node_modules/.bin
 
 PORT ?= 8029
 
-.PHONY: build build-sdk build-lib build-manifest build-demo build-wasm build-wasm-ci build-wasm-docker \
+.PHONY: build build-sdk build-lib build-specs build-app build-demo build-wasm build-wasm-ci build-wasm-docker \
 	preview typecheck test smoke release-check i install clean help
+
+SPECS := node_modules/@wasm-gaming/engine-specs
 
 i: install
 install: ## Install dev dependencies
@@ -15,22 +17,27 @@ node_modules: package.json
 
 build: build-wasm build-sdk ## Full build → dist/ (WASM first, then SDK/demo)
 
-build-sdk: build-lib build-manifest build-demo ## TypeScript + manifest + demo shell
+build-sdk: build-lib build-specs build-app build-demo ## The published SDK: TypeScript + the contract runtime + the app, and the demo page
 
 build-lib: node_modules ## Compile SDK/options/manifest → dist/snes9x/
 	$(BIN)/tsc -p tsconfig.json
 
-build-manifest: build-lib ## Serialize typed manifest → dist/manifest.json
-	node scripts/emit-manifest.mjs
+build-specs: build-lib ## Ship the contract runtime beside the SDK and import it relatively
+	# The SDK extends the contract's base classes, so engine-specs is a runtime import.
+	# Copied into dist/snes9x/ (inside `files`) and the emitted imports rewritten to it:
+	# the package loads from any static server, no import map.
+	cp $(SPECS)/dist/engine-specs.js dist/snes9x/engine-specs.js
+	node scripts/localize-specs.mjs dist/snes9x
 
-DEMO_SRC := node_modules/@wasm-gaming/engine-specs/demo
+build-app: ## The engine's own app (suspend points + pause menu) → dist/snes9x/app/
+	# Plain JS + CSS, mounted by hosts as <engine>/app/app.js (EngineApp); it imports
+	# the SDK next to it relatively.
+	rm -rf dist/snes9x/app
+	mkdir -p dist/snes9x/app
+	cp src/app/app.js src/app/app.css dist/snes9x/app/
 
-build-demo: build-lib ## Assemble the themable engine-specs demo shell + SNES skin
-	@rm -f dist/index.html dist/main.js
-	cp -R $(DEMO_SRC)/. dist/
-	rm -f dist/README.md
+build-demo: build-lib ## The no-build demo page → dist/index.html
 	cp src/demo/index.html dist/index.html
-	cp src/demo/snes9x.css dist/snes9x.css
 
 build-wasm: ## Build Snes9x WASM artifacts via local Docker wrapper
 	bash scripts/build-snes9x-docker.sh
@@ -46,7 +53,8 @@ typecheck: build-lib
 smoke: ## Headless boot test (needs dist/snes9x + roms/*.sfc)
 	node scripts/smoke-test.cjs
 
-test: typecheck
+test: typecheck build-sdk ## Type-check, then run tests/ against the built package
+	node --test tests/*.test.mjs
 
 release-check: test
 	npm config get registry

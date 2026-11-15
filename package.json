@@ -22,13 +22,15 @@
       "types": "./dist/snes9x/snes9x.options.d.ts",
       "import": "./dist/snes9x/snes9x.options.js"
     },
-    "./manifest": "./dist/manifest.json"
+    "./app": {
+      "import": "./dist/snes9x/app/app.js"
+    }
   },
   "files": [
     "dist/snes9x/",
-    "dist/manifest.json",
+    "src/app/",
     "src/snes9x.config.ts",
-    "src/snes9x.manifest.ts",
+    "src/snes9x.core.ts",
     "src/snes9x.menu.ts",
     "src/snes9x.options.ts",
     "src/snes9x.sdk.ts",
@@ -36,16 +38,11 @@
   ],
   "comment:scripts": "Build logic lives in the Makefile, not here (make build / build-sdk / build-wasm / preview).",
   "scripts": {},
-  "peerDependencies": {
-    "@wasm-gaming/engine-specs": ">=0.2.0"
-  },
-  "peerDependenciesMeta": {
-    "@wasm-gaming/engine-specs": {
-      "optional": true
-    }
+  "comment:dependencies": "engine-specs is the one wasm-gaming package an engine depends on. Its runtime is also copied into dist/snes9x/ and imported relatively, so the built SDK loads without a bundler or an import map; the dependency carries the types.",
+  "dependencies": {
+    "@wasm-gaming/engine-specs": "^0.4.1"
   },
   "devDependencies": {
-    "@wasm-gaming/engine-specs": "^0.2.4",
     "typescript": "^5.5.0"
   },
   "engineContract": "https://github.com/wasm-gaming/engine-specs",

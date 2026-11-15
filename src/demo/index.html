@@ -1,56 +1,72 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Snes9x WASM — Super Nintendo Demo</title>
-    <link rel="icon" href="data:," />
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Snes9x WASM</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    html, body { margin: 0; height: 100%; background: #000; color: #e2e8f0; }
+    body { display: grid; grid-template-rows: 1fr auto; }
+    #stage { display: grid; place-items: center; min-height: 0; }
+    #bar { display: flex; gap: .75rem; align-items: center; justify-content: center; padding: .75rem; background: #111; flex-wrap: wrap; }
+    button { font: inherit; padding: .4rem 1rem; background: #222; color: inherit; border: 1px solid #444; border-radius: 6px; cursor: pointer; }
+    #status { color: #94a3b8; font-size: .85rem; }
+    #drop { position: fixed; inset: 0; display: none; place-items: center; background: #000c; font-size: 1.4rem; }
+    body.dragging #drop { display: grid; }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="bar">
+    <input type="file" id="rom" accept=".sfc,.smc,.fig,.swc" />
+    <button id="pause" disabled>Pause</button>
+    <button id="reset" disabled>Reset</button>
+    <span id="status">Pick or drop a Super Nintendo ROM. Arrows, Z X A S (B A Y X), Q W, Enter, Right Shift.</span>
+  </div>
+  <div id="drop">Drop the ROM</div>
 
-    <!-- Base theme from the engine-specs demo template, then our SNES skin.
-         snes9x.css is loaded last so its :root token overrides win. -->
-    <link rel="stylesheet" href="./demo.css" />
-    <link rel="stylesheet" href="./snes9x.css" />
-  </head>
-  <body>
-    <main></main>
+  <script type="module">
+    // No build and no import map: the SDK is self-contained (it carries the
+    // contract's runtime beside it). One game per page — reload for another.
+    import Snes9xSDK from './snes9x/snes9x.sdk.js';
 
-    <!-- Hand the Snes9x SDK to the template shell (sdk.js picks up window.SDK),
-         then boot the shared demo.js. Order matters: SDK must exist before
-         demo.js runs its top-level getSdk(). -->
-    <script type="module">
-      import sdk from "./snes9x/snes9x.sdk.js";
+    const status = document.querySelector('#status');
+    let play = null;
 
-      // The template shell only passes fileName/byteLength, so engine options
-      // keep their defaults. Expose the ones worth trying without editing code
-      // as page query params: ?region=pal, ?aspect=1:1, ?cropOverscan=false,
-      // ?multitap=true, ?interpolation=none, ...
-      const params = new URLSearchParams(location.search);
-      const BOOLEAN_KEYS = ["cropOverscan", "multitap", "gamepads", "escMenu"];
-      const NUMBER_KEYS = ["maxSpriteTilesPerLine", "superFXClockMultiplier", "volume"];
-      const overrides = {};
-      for (const key of [
-        "region",
-        "interpolation",
-        "renderFilter",
-        "aspect",
-        "logLevel",
-        ...BOOLEAN_KEYS,
-        ...NUMBER_KEYS,
-      ]) {
-        const value = params.get(key);
-        if (value === null) continue;
-        if (BOOLEAN_KEYS.includes(key)) overrides[key] = value !== "false";
-        else if (NUMBER_KEYS.includes(key)) overrides[key] = Number(value);
-        else overrides[key] = value;
+    async function boot(file) {
+      if (play) { location.reload(); return; }
+      status.textContent = `Loading ${file.name}…`;
+      try {
+        play = await new Snes9xSDK()
+          .assets({ rom: () => file.arrayBuffer() })
+          .storage({ namespace: file.name.replace(/\.[^.]+$/, '') })
+          .on('saves', ({ detail }) => (status.textContent = `Saved ${detail.files.join(', ')} → ${play.storagePath}/`))
+          .on('error', ({ detail }) => (status.textContent = `Error: ${detail.message}`))
+          .mount(document.querySelector('#stage'))
+          .start();
+        status.textContent = `${file.name} — saves in OPFS ${play.storagePath}/`;
+        for (const b of document.querySelectorAll('button')) b.disabled = false;
+        document.querySelector('#stage canvas').focus();
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
       }
+    }
 
-      window.SDK = {
-        ...sdk,
-        load: (config) =>
-          sdk.load({ ...config, options: { ...config.options, ...overrides } }),
-      };
-
-      await import("./demo.js");
-    </script>
-  </body>
+    document.querySelector('#rom').addEventListener('change', (e) => e.target.files[0] && boot(e.target.files[0]));
+    document.querySelector('#pause').addEventListener('click', (e) => {
+      if (play.pausedBy) { play.resume('demo'); e.target.textContent = 'Pause'; }
+      else { play.pause('demo'); e.target.textContent = 'Resume'; }
+    });
+    document.querySelector('#reset').addEventListener('click', () => play.restart());
+    addEventListener('dragover', (e) => { e.preventDefault(); document.body.classList.add('dragging'); });
+    addEventListener('dragleave', () => document.body.classList.remove('dragging'));
+    addEventListener('drop', (e) => {
+      e.preventDefault();
+      document.body.classList.remove('dragging');
+      const file = e.dataTransfer.files[0];
+      if (file) boot(file);
+    });
+  </script>
+</body>
 </html>
