@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     container:
-      image: emscripten/emsdk:latest
+      image: emscripten/emsdk:7.0.0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
