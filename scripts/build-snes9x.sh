@@ -6,7 +6,8 @@ set -euo pipefail
 # Like the Geolith port, upstream needs no patching: the source list below
 # mirrors SOURCES_CXX from libretro/Makefile.common (minus libretro.cpp and
 # the NTSC filter) and links scripts/shim/s9x_shim.cpp in place of a frontend
-# port. Compiled straight with emcc — no upstream Makefile, no autotools.
+# port. Compiled straight with em++ (C++ throughout: emcc stopped linking libc++ for
+# C++ objects in emsdk 7) — no upstream Makefile, no autotools.
 #
 # Outputs: dist/snes9x/snes9x.js (MODULARIZE factory `createSnes9xModule`)
 #          dist/snes9x/snes9x.wasm
@@ -126,8 +127,8 @@ LDFLAGS=(
     -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAP16,HEAPU32,UTF8ToString
 )
 
-echo "Compiling Snes9x core + shim with emcc..."
-emcc \
+echo "Compiling Snes9x core + shim with em++..."
+em++ \
     "${CFLAGS[@]}" \
     "${CORE_SRCS[@]}" \
     "${PROJECT_DIR}/scripts/shim/s9x_shim.cpp" \

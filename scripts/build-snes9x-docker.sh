@@ -10,7 +10,7 @@ echo "Building Snes9x WASM via Docker..."
 docker run --rm \
     -v "$PROJECT_DIR:/workspace" \
     -w /workspace \
-    emscripten/emsdk:latest \
+    emscripten/emsdk:7.0.0 \
     bash -c "
       set -euo pipefail
       test -x $BUILD_SCRIPT || chmod +x $BUILD_SCRIPT
