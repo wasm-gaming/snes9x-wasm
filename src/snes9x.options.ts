@@ -1,4 +1,4 @@
-import type { JSONSchema } from '@wasm-gaming/engine-specs';
+import type { EnginePayloads, EngineSpec, PropertySpec } from '@wasm-gaming/engine-specs';
 
 /**
  * Video standard. `auto` trusts the region byte in the cartridge header,
@@ -364,39 +364,108 @@ export function coerceOptionValue(
   return option.values.some((choice) => choice.value === next) ? next : undefined;
 }
 
-function schemaForOption(option: Snes9xOptionSpec): JSONSchema {
-  if (option.type === 'boolean') {
-    return { type: 'boolean', default: option.default, description: option.description };
-  }
-  if (option.type === 'enum') {
-    return {
-      type: 'string',
-      enum: option.values.map((choice) => choice.value),
-      default: option.default,
-      description: option.description,
-    };
-  }
+// ------------------------------------------------------------ contract
+
+/** Bytes, or a thunk that produces them only when the engine actually needs them. */
+export type Snes9xAsset =
+  | Uint8Array
+  | ArrayBuffer
+  | null
+  | (() => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>);
+
+/** The engine: fixed for the life of the wasm instance. */
+export interface Snes9xEngineConfig {
+  /** Emscripten glue URL. Defaults to `./snes9x.js` next to the SDK. */
+  jsUrl?: string;
+  /** WASM URL. Defaults to `./snes9x.wasm` next to the glue. */
+  wasmUrl?: string;
+}
+
+export interface Snes9xAssets {
+  /** The cartridge: `.sfc`, `.smc`, `.fig` or `.swc`. Required to start. */
+  rom?: Snes9xAsset;
+}
+
+/** Where this engine's files live, and whether they outlive the page. */
+export interface Snes9xStorage {
+  /**
+   * Per-game folder for battery RAM and save states, inside the engine's own folder:
+   * OPFS `snes9x/<namespace>/`. Cleaned like every engine's (see `storagePath()`).
+   *
+   * @defaultValue `"default"`
+   */
+  namespace?: string;
+  /** `null` keeps nothing; otherwise the folder is mirrored to OPFS. */
+  persist?: 'opfs' | null;
+}
+
+/** Engine events beyond the contract's core set. */
+export interface Snes9xEvents {
+  /** Files were just written to (or removed from) `snes9x/<namespace>/`. */
+  saves: { files: string[] };
+}
+
+export interface Snes9xPayloads extends EnginePayloads {
+  config: Snes9xEngineConfig;
+  options: Snes9xOptions;
+  assets: Snes9xAssets;
+  storage: Snes9xStorage;
+  events: Snes9xEvents;
+}
+
+/** The SNES picture: 256 × 224 (or 239, and doubled in hi-res modes), shown at 4:3. */
+export const SNES9X_VIDEO = { width: 256, height: 224, aspect: '4:3' } as const;
+
+/** One option of the catalog as the contract describes it: live unless it needs a reset. */
+function specForOption(option: Snes9xOptionSpec): PropertySpec<Snes9xOptionValue> {
   return {
-    type: option.integer ? 'integer' : 'number',
     default: option.default,
-    ...(option.range
-      ? { minimum: option.range.minimum, maximum: option.range.maximum }
-      : { enum: option.values.map((choice) => choice.value) }),
     description: option.description,
+    live: !option.requiresReset,
+    ...(option.type === 'boolean'
+      ? { enum: [true, false] }
+      : option.type === 'enum'
+        ? { enum: option.values.map((choice) => choice.value) }
+        : option.range
+          ? {}
+          : { enum: option.values.map((choice) => choice.value) }),
   };
 }
 
-export const SNES9X_OPTIONS_SCHEMA: JSONSchema = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    ...Object.fromEntries(
-      SNES9X_ENGINE_OPTIONS.map((option) => [option.key, schemaForOption(option)]),
-    ),
+export const SNES9X_SPEC: EngineSpec<Snes9xPayloads> = {
+  config: {
+    jsUrl: { live: false, description: 'Emscripten glue URL. Defaults to ./snes9x.js.' },
+    wasmUrl: { live: false, description: 'WASM URL. Defaults to ./snes9x.wasm.' },
+  },
+  options: {
+    ...(Object.fromEntries(SNES9X_ENGINE_OPTIONS.map((option) => [option.key, specForOption(option)])) as Record<
+      Snes9xOptionKey,
+      PropertySpec<never>
+    >),
     escMenu: {
-      type: 'boolean',
       default: true,
-      description: 'Show the built-in in-game settings menu when the player presses Escape.',
+      enum: [true, false],
+      live: false,
+      description: 'The built-in settings overlay on Escape. Off when the engine app runs the game (its pause menu has Escape).',
+    },
+  },
+  assets: {
+    rom: {
+      allowedTypes: ['.sfc', '.smc', '.fig', '.swc'],
+      live: false,
+      description: 'The Super Nintendo / Super Famicom cartridge. Required to start.',
+    },
+  },
+  storage: {
+    namespace: {
+      default: 'default',
+      live: false,
+      description: "Folder for this game's battery RAM and save states (OPFS snes9x/<namespace>/).",
+    },
+    persist: {
+      enum: ['opfs', null],
+      live: false,
+      description: 'null keeps nothing; otherwise the folder is mirrored to OPFS.',
     },
   },
 };

@@ -40,7 +40,7 @@ jobs:
           make typecheck
           make test
 
-      - name: Build SDK (TypeScript + manifest + demo shell)
+      - name: Build SDK (TypeScript + the contract runtime + the app + demo page)
         run: make build-sdk
 
       - name: Upload SDK artifacts

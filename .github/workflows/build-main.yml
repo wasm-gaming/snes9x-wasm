@@ -24,7 +24,7 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Build SDK (TypeScript + manifest + demo shell)
+      - name: Build SDK (TypeScript + the contract runtime + the app + demo page)
         run: make build-sdk
       - uses: actions/upload-artifact@v4
         with:
