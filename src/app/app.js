@@ -24,6 +24,9 @@ import {
   createSettingsScreen,
   createWakeLock,
   loadSettings,
+  menuKeyAliases,
+  menuKeyHint,
+  PAD_BUTTON_NAMES,
   resolveLocale,
   saveSettings,
   settingsDefaults,
@@ -217,12 +220,19 @@ export async function mount(target, host) {
 
   // A hint with an action is also a button: tapping it does what the gamepad button
   // would (on a phone the menus are tapped). One without is the gamepad's only.
+  // A pad button in a hint shows the key bound to it next to it ("B" "S"), when that key
+  // works in the menus too (menuControls / menuKeyAliases, engine-specs 0.6.2).
+  const keyOf = (k) => {
+    const button = PAD_BUTTON_NAMES.indexOf(k);
+    const key = button >= 0 ? menuKeyHint(menuControls(), button) : '';
+    return key && key !== k ? `<kbd class="key">${esc(key)}</kbd>` : '';
+  };
   const hints = (pairs) =>
     `<footer class="s9x-hints">${pairs
       .map(([k, t, act]) =>
         act
-          ? `<button class="hint" data-act="${act}"><kbd>${k}</kbd>${t}</button>`
-          : `<span class="is-pad"><kbd>${k}</kbd>${t}</span>`,
+          ? `<button class="hint" data-act="${act}"><kbd>${k}</kbd>${keyOf(k)}${t}</button>`
+          : `<span class="is-pad"><kbd>${k}</kbd>${keyOf(k)}${t}</span>`,
       )
       .join('')}</footer>`;
 
@@ -698,6 +708,11 @@ export async function mount(target, host) {
   let screen = null;
   const described = async () => ({ ...(await play.options()), ...SHARED_SETTINGS });
   const controlRows = () => controlsModel(BUTTONS, DEFAULT_CONTROLS, saved.controls, locale);
+  /** The engine's buttons: the player's key, and the pad button the menus read it as (the default). */
+  const menuControls = () =>
+    Object.entries(DEFAULT_CONTROLS).map(([id, d]) => ({ code: saved.controls[id]?.code ?? d.code, button: d.button }));
+  /** The keys bound to the pad's menu buttons work in the menus too (the launcher's input). */
+  const applyMenuKeys = () => host.input.setKeyAliases?.(menuKeyAliases(menuControls()));
 
   const openSettings = async () => {
     const all = await described();
@@ -723,6 +738,7 @@ export async function mount(target, host) {
       onControl(_id, _binding, bindings) {
         saved.controls = bindings;
         play.setControls(toSnes9xControls(bindings));
+        applyMenuKeys();
         void store();
       },
       onReset() {
@@ -730,6 +746,7 @@ export async function mount(target, host) {
         saved = { version: 1, values: {}, controls: {} };
         play.options(Object.fromEntries(Object.entries(defaults).filter(([key]) => !(key in SHARED_SETTINGS))));
         play.setControls({});
+        applyMenuKeys();
         applyShared();
         void store();
         screen.update(settingsModel(all, defaults, locale), controlRows());
@@ -926,6 +943,7 @@ export async function mount(target, host) {
 
   const handle = {
     async unmount() {
+      host.input.setKeyAliases?.({});
       destroyed = true;
       leaving = true;
       off();
@@ -975,6 +993,7 @@ export async function mount(target, host) {
       return handle;
     }
     play.setControls(toSnes9xControls({ ...DEFAULT_CONTROLS, ...saved.controls }));
+    applyMenuKeys();
     offFrames = play.onFrames(() => perf.frame());
     applyShared();
     readPoints();
