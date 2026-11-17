@@ -37,7 +37,7 @@ import {
   type EngineSDKConstructor,
   type EventsOf,
 } from '@wasm-gaming/engine-specs';
-import { createSnes9xCore, type Snes9xCore } from './snes9x.core.js';
+import { createSnes9xCore, type Snes9xControls, type Snes9xCore } from './snes9x.core.js';
 import {
   SNES9X_SPEC,
   SNES9X_VIDEO,
@@ -58,6 +58,8 @@ export type {
   Snes9xStorage,
 } from './snes9x.options.js';
 export type { Snes9xConfig } from './snes9x.config.js';
+export type { Snes9xControl, Snes9xControls } from './snes9x.core.js';
+export { DEFAULT_KEYMAP, DEFAULT_PADMAP } from './snes9x.core.js';
 export { SNES9X_SPEC, SNES9X_VIDEO } from './snes9x.options.js';
 
 const ENGINE_ID = 'snes9x';
@@ -152,6 +154,8 @@ interface StoredFile {
 export class Snes9xPlay extends EnginePlayBase<Snes9xPayloads> {
   #core: Snes9xCore | null = null;
   #destroyed = false;
+  #controls: Snes9xControls | null = null;
+  #frameListeners = new Set<(count: number) => void>();
   #pauseOwner: string | null = null;
 
   #canvas: HTMLCanvasElement | null = null;
@@ -190,6 +194,21 @@ export class Snes9xPlay extends EnginePlayBase<Snes9xPayloads> {
   /** The live settings (the options catalog); writes apply to the running game. */
   get settings(): Snes9xCore['config'] {
     return this.#requireCore().config;
+  }
+
+  /**
+   * Rebind the pad's controls: player 1's physical keys (`KeyboardEvent.code`) and every
+   * pad's buttons (standard mapping). What is left out keeps its default. Live.
+   */
+  setControls(controls: Snes9xControls): void {
+    this.#controls = controls;
+    this.#core?.setControls(controls);
+  }
+
+  /** Hear every batch of emulated frames (for a performance counter); returns the unsubscribe. */
+  onFrames(listener: (count: number) => void): () => void {
+    this.#frameListeners.add(listener);
+    return () => this.#frameListeners.delete(listener);
   }
 
   /** The current frame as a PNG (the 2D canvas keeps the last one, paused or not). */
@@ -393,7 +412,11 @@ export class Snes9xPlay extends EnginePlayBase<Snes9xPayloads> {
       wasmUrl: config.wasmUrl,
       menuMount: this.#box ?? document.body,
       onResize: () => this.#fit(),
+      onFrames: (count) => {
+        for (const listener of this.#frameListeners) listener(count);
+      },
     });
+    if (this.#controls) this.#core.setControls(this.#controls);
     this.#core.start();
 
     if (this.#persist) {
