@@ -1,4 +1,4 @@
-import type { EnginePayloads, EngineSpec, PropertySpec } from '@wasm-gaming/engine-specs';
+import type { EnginePayloads, EngineSpec, Localized, PropertySpec, SettingGroup } from '@wasm-gaming/engine-specs';
 
 /**
  * Video standard. `auto` trusts the region byte in the cartridge header,
@@ -417,18 +417,52 @@ export interface Snes9xPayloads extends EnginePayloads {
 export const SNES9X_VIDEO = { width: 256, height: 224, aspect: '4:3' } as const;
 
 /** One option of the catalog as the contract describes it: live unless it needs a reset. */
+/**
+ * The settings screen's words (engine-specs `settingsModel()`): the Spanish of each label and
+ * value label, and the screen section of each catalog group. A group without a section
+ * (`debug`) is not shown to players.
+ */
+const SETTING_GROUP: Readonly<Record<string, SettingGroup>> = {
+  video: 'video',
+  audio: 'audio',
+  emulation: 'emulation',
+  controllers: 'emulation',
+};
+const SPANISH: Readonly<Partial<Record<Snes9xOptionKey, { label: string; values?: Record<string, string> }>>> = {
+  renderFilter: { label: 'Suavizado', values: { pixelated: 'Píxeles nítidos', smooth: 'Suavizado' } },
+  aspect: { label: 'Proporción' },
+  cropOverscan: { label: 'Recortar el overscan' },
+  volume: { label: 'Volumen', values: { Mute: 'Silencio' } },
+  interpolation: { label: 'Interpolación del DSP', values: { none: 'Ninguna', linear: 'Lineal', gaussian: 'Gaussiana', cubic: 'Cúbica' } },
+  region: { label: 'Región', values: { auto: 'Automática' } },
+  maxSpriteTilesPerLine: { label: 'Límite de sprites', values: { Hardware: 'El de la consola', 'No limit': 'Sin límite' } },
+  superFXClockMultiplier: { label: 'Reloj del Super FX' },
+  multitap: { label: 'Multitap' },
+  gamepads: { label: 'Mandos' },
+};
+const groupOf = (key: Snes9xOptionKey): string | undefined =>
+  SNES9X_OPTION_GROUPS.find((group) => group.options.some((option) => option.key === key))?.id;
+
+function settingFields(option: Snes9xOptionSpec): Pick<PropertySpec<Snes9xOptionValue>, 'label' | 'group' | 'valueLabels'> {
+  const group = SETTING_GROUP[groupOf(option.key) ?? ''];
+  if (!group) return {};
+  const es = SPANISH[option.key];
+  const label: Localized = es ? { en: option.label, es: es.label } : option.label;
+  if (option.type === 'boolean') return { label, group };
+  const valueLabels = option.values.map((choice): Localized => {
+    const spanish = es?.values?.[String(choice.value)] ?? es?.values?.[choice.label];
+    return spanish ? { en: choice.label, es: spanish } : choice.label;
+  });
+  return { label, group, valueLabels };
+}
+
 function specForOption(option: Snes9xOptionSpec): PropertySpec<Snes9xOptionValue> {
   return {
     default: option.default,
     description: option.description,
     live: !option.requiresReset,
-    ...(option.type === 'boolean'
-      ? { enum: [true, false] }
-      : option.type === 'enum'
-        ? { enum: option.values.map((choice) => choice.value) }
-        : option.range
-          ? {}
-          : { enum: option.values.map((choice) => choice.value) }),
+    ...(option.type === 'boolean' ? { enum: [true, false] } : { enum: option.values.map((choice) => choice.value) }),
+    ...settingFields(option),
   };
 }
 

@@ -98,7 +98,7 @@ const PAD_BITS: Record<string, number> = {
  * layout mirrors the pad's diamond on the keyboard: X/Z on the bottom row are
  * B/Y, S/A on the row above are A/X.
  */
-const DEFAULT_KEYMAP: Record<string, string> = {
+export const DEFAULT_KEYMAP: Readonly<Record<string, string>> = {
   'p1.up': 'ArrowUp',
   'p1.down': 'ArrowDown',
   'p1.left': 'ArrowLeft',
@@ -230,7 +230,41 @@ export interface Snes9xCoreInit {
   menuMount: HTMLElement;
   /** A new picture size or aspect, so the host can refit the canvas. */
   onResize?: () => void;
+  /** Called after each batch of emulated frames, with how many ran (a performance counter). */
+  onFrames?: (count: number) => void;
 }
+
+/** The pad's controls, as `setControls()` names them. */
+export type Snes9xControl = 'a' | 'b' | 'x' | 'y' | 'l' | 'r' | 'start' | 'select' | 'up' | 'down' | 'left' | 'right';
+
+/**
+ * The player's bindings: player 1's physical keys (`KeyboardEvent.code`), and the gamepad
+ * button (standard mapping) of each control, the same for every pad.
+ */
+export interface Snes9xControls {
+  keys?: Partial<Record<Snes9xControl, string>>;
+  buttons?: Partial<Record<Snes9xControl, number>>;
+}
+
+/**
+ * Default gamepad buttons (standard mapping) per control. The SNES face buttons sit rotated
+ * relative to a modern pad: the bottom / right buttons (0 / 1) are B / A, the left / top ones
+ * (2 / 3) Y / X.
+ */
+export const DEFAULT_PADMAP: Readonly<Record<Snes9xControl, number>> = Object.freeze({
+  b: 0,
+  a: 1,
+  y: 2,
+  x: 3,
+  l: 4,
+  r: 5,
+  select: 8,
+  start: 9,
+  up: 12,
+  down: 13,
+  left: 14,
+  right: 15,
+});
 
 /** The running emulator, as `snes9x.sdk.ts` drives it. */
 export interface Snes9xCore {
@@ -251,6 +285,8 @@ export interface Snes9xCore {
   snapshot(): Promise<Blob | null>;
   /** Battery RAM to OPFS; true when there was something to write and it was written. */
   persistSram(): Promise<boolean>;
+  /** Rebind player 1's keys and every pad's buttons; what is not given keeps its default. Live. */
+  setControls(controls: Snes9xControls): void;
   destroy(): Promise<void>;
 }
 
@@ -434,6 +470,25 @@ export async function createSnes9xCore(init: Snes9xCoreInit): Promise<Snes9xCore
   };
   buildKeymap(DEFAULT_KEYMAP);
 
+  // Gamepad button per control (standard mapping), for every pad; the left stick always moves too.
+  let padTable: Record<Snes9xControl, number> = { ...DEFAULT_PADMAP };
+  const setControls = (controls: Snes9xControls): void => {
+    const keys: Record<string, string> = { ...DEFAULT_KEYMAP };
+    for (const [control, code] of Object.entries(controls.keys ?? {})) {
+      if (typeof code !== 'string' || !code) continue;
+      // A key player 1 takes is no longer player 2's.
+      for (const [action, other] of Object.entries(keys)) if (other === code) delete keys[action];
+      keys[`p1.${control}`] = code;
+    }
+    buildKeymap(keys);
+    padTable = { ...DEFAULT_PADMAP };
+    for (const [control, button] of Object.entries(controls.buttons ?? {})) {
+      if (Number.isInteger(button) && control in padTable) padTable[control as Snes9xControl] = button as number;
+    }
+    keyMasks.fill(0);
+    pushInputs();
+  };
+
   const applyKey = (code: string, down: boolean): boolean => {
     const ctl = codeToControl.get(code);
     if (!ctl) return false;
@@ -468,20 +523,15 @@ export async function createSnes9xCore(init: Snes9xCoreInit): Promise<Snes9xCore
       const pad = pads[p];
       let mask = 0;
       if (pad && pad.connected) {
-        const btn = (i: number): boolean => !!pad.buttons[i]?.pressed;
+        const btn = (control: Snes9xControl): boolean => !!pad.buttons[padTable[control]]?.pressed;
         const ax = (i: number): number => pad.axes[i] ?? 0;
-        if (btn(0)) mask |= 1 << PAD_BITS.b;
-        if (btn(1)) mask |= 1 << PAD_BITS.a;
-        if (btn(2)) mask |= 1 << PAD_BITS.y;
-        if (btn(3)) mask |= 1 << PAD_BITS.x;
-        if (btn(4)) mask |= 1 << PAD_BITS.l;
-        if (btn(5)) mask |= 1 << PAD_BITS.r;
-        if (btn(8)) mask |= 1 << PAD_BITS.select;
-        if (btn(9)) mask |= 1 << PAD_BITS.start;
-        if (btn(12) || ax(1) < -0.4) mask |= 1 << PAD_BITS.up;
-        if (btn(13) || ax(1) > 0.4) mask |= 1 << PAD_BITS.down;
-        if (btn(14) || ax(0) < -0.4) mask |= 1 << PAD_BITS.left;
-        if (btn(15) || ax(0) > 0.4) mask |= 1 << PAD_BITS.right;
+        for (const control of ['b', 'a', 'y', 'x', 'l', 'r', 'select', 'start'] as const) {
+          if (btn(control)) mask |= 1 << PAD_BITS[control];
+        }
+        if (btn('up') || ax(1) < -0.4) mask |= 1 << PAD_BITS.up;
+        if (btn('down') || ax(1) > 0.4) mask |= 1 << PAD_BITS.down;
+        if (btn('left') || ax(0) < -0.4) mask |= 1 << PAD_BITS.left;
+        if (btn('right') || ax(0) > 0.4) mask |= 1 << PAD_BITS.right;
       }
       if (mask !== padMasks[p]) {
         padMasks[p] = mask;
@@ -626,6 +676,7 @@ export async function createSnes9xCore(init: Snes9xCoreInit): Promise<Snes9xCore
     if (frames > 0) {
       runFrames(frames);
       renderFrame();
+      init.onFrames?.(frames);
     }
 
   };
@@ -779,6 +830,7 @@ export async function createSnes9xCore(init: Snes9xCoreInit): Promise<Snes9xCore
       return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png'));
     },
     persistSram,
+    setControls,
     async destroy() {
       running = false;
       paused = false;
